@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Chillout-Special Loader (Fixed)
-// @version      1.3
+// @version      1.4
 // @description  Fixed loader that properly sets window.chilloutAllowedUsers
 // @author       zorlex25
 // @match        *://www.leitstellenspiel.de/*
@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @require      https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js
+// @require      https://code.jquery.com/jquery-3.6.0.min.js
 // @updateURL    https://raw.githubusercontent.com/zorlex25/LSS/main/chillout-fixed-loader.user.js
 // @downloadURL  https://raw.githubusercontent.com/zorlex25/LSS/main/chillout-fixed-loader.user.js
 // ==/UserScript==
@@ -25,7 +26,7 @@
 
     // Security settings
     DOMAIN_CHECK: "www.leitstellenspiel.de",
-    VERSION: "1.3",
+    VERSION: "1.4",
     CACHE_DURATION: 10 * 60 * 1000, // 10 minutes
     TIMEOUT: 8000,
     DEBUG: false, // Set to true for debugging
@@ -222,7 +223,12 @@
       // IMPORTANT: Set the global variable that your main script expects
       window.chilloutAllowedUsers = allowedUsers
 
-      if (CONFIG.DEBUG) console.log("🔧 Set window.chilloutAllowedUsers:", allowedUsers)
+      if (CONFIG.DEBUG) {
+        console.log("🔧 Set window.chilloutAllowedUsers:", allowedUsers)
+        console.log("🔧 jQuery available:", typeof $, typeof jQuery)
+        console.log("🔧 window.$ available:", typeof window.$)
+        console.log("🔧 window.jQuery available:", typeof window.jQuery)
+      }
 
       // Remove userscript headers if present
       const cleanCode = code.replace(/\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\s*/, "")
