@@ -1,342 +1,737 @@
 // ==UserScript==
-// @name         Chillout-Special Loader (Fixed)
-// @version      1.4
-// @description  Fixed loader that properly sets window.chilloutAllowedUsers
-// @author       zorlex25
+// @name         Chillout-Special Clean
+// @version      2.3
+// @author       Lenni
 // @match        *://www.leitstellenspiel.de/*
-// @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
-// @grant        GM_setValue
-// @grant        GM_getValue
-// @grant        GM_deleteValue
-// @require      https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js
 // @require      https://code.jquery.com/jquery-3.6.0.min.js
-// @updateURL    https://raw.githubusercontent.com/zorlex25/LSS/main/chillout-fixed-loader.user.js
-// @downloadURL  https://raw.githubusercontent.com/zorlex25/LSS/main/chillout-fixed-loader.user.js
 // ==/UserScript==
 
-;(async () => {
-  // 🔐 Configuration
-  const CONFIG = {
-    MAIN_CODE_URL: "https://raw.githubusercontent.com/zorlex25/LSS/main/chillout-main-clean.user.js",
-    USER_LIST_URL: "https://raw.githubusercontent.com/zorlex25/LSS/main/allowed_users.json",
+/* global $, CryptoJS, GM_addStyle */
 
-    // Encryption settings
-    ENCRYPTION_KEY: "FreiwilligeFeuerwehrLemgo",
+(async function () {
+    'use strict';
 
-    // Security settings
-    DOMAIN_CHECK: "www.leitstellenspiel.de",
-    VERSION: "1.4",
-    CACHE_DURATION: 10 * 60 * 1000, // 10 minutes
-    TIMEOUT: 8000,
-    DEBUG: false, // Set to true for debugging
-  }
+    // This will be set by the loader
+    if (!window.chilloutAllowedUsers) {
+        console.error("❌ User list not available");
+        return;
+    }
 
-  // 🔒 Basic security check
-  if (window.location.hostname !== CONFIG.DOMAIN_CHECK) {
-    console.error("❌ Domain check failed")
-    return
-  }
+    let AllowedUserIDs = window.chilloutAllowedUsers;
+    let autoRunActive = false;
 
-  // 📡 HTTP request function
-  function fetchRemote(url) {
-    return new Promise((resolve, reject) => {
-      if (CONFIG.DEBUG) console.log("📡 Fetching:", url)
-      GM_xmlhttpRequest({
-        method: "GET",
-        url: url,
-        timeout: CONFIG.TIMEOUT,
-        headers: {
-          "Cache-Control": "no-cache",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        },
-        onload: (response) => {
-          if (CONFIG.DEBUG) console.log("📡 Response status:", response.status)
-          if (response.status === 200) {
-            resolve(response.responseText)
-          } else {
-            reject(new Error(`HTTP ${response.status}: ${response.statusText}`))
-          }
-        },
-        onerror: (error) => reject(new Error("Network error: " + error)),
-        ontimeout: () => reject(new Error("Request timeout")),
-      })
-    })
-  }
+    // Aktuelle User-ID aus Profil-Link extrahieren
+    function getCurrentUserId() {
+        const profileLink = document.querySelector('a[href^="/profile/"]');
+        if (profileLink) {
+            const match = profileLink.href.match(/\/profile\/(\d+)/);
+            return match ? Number(match[1]) : null;
+        }
+        return null;
+    }
 
-  // 💾 Simple cache
-  const Cache = {
-    set: (key, data) => {
-      const cacheData = {
-        data: data,
-        timestamp: Date.now(),
-        version: CONFIG.VERSION,
-      }
-      GM_setValue(`cl_${key}`, JSON.stringify(cacheData))
-    },
+    // Prüfen ob Hauptseite (hier anpassen, falls nötig)
+    function isMainPage() {
+        return window.location.pathname === '/' || window.location.pathname === '/missions';
+    }
 
-    get: (key) => {
-      try {
-        const cached = GM_getValue(`cl_${key}`, null)
-        if (!cached) return null
+    const currentUserId = getCurrentUserId();
 
-        const cacheData = JSON.parse(cached)
+    if (!isMainPage()) return;
 
-        // Check version and expiration
-        if (cacheData.version !== CONFIG.VERSION || Date.now() - cacheData.timestamp > CONFIG.CACHE_DURATION) {
-          GM_deleteValue(`cl_${key}`)
-          return null
+    if (!AllowedUserIDs.includes(currentUserId)) {
+        alert("Du bist nicht berechtigt, dieses Script zu nutzen, deaktiviere es umgehend!");
+        const logoutBtn = document.getElementById("logout_button");
+        if (logoutBtn) logoutBtn.click();
+        else window.location.href = "/users/sign_out";
+        return;
+    }
+
+    console.log(`✅ Zugriff erlaubt für User #${currentUserId}`);
+
+    if (!sessionStorage.aMissions || JSON.parse(sessionStorage.aMissions).lastUpdate < (new Date().getTime() - 5 * 60 * 1000)) {
+        await $.getJSON('/einsaetze.json').done(data => sessionStorage.setItem('aMissions', JSON.stringify({ lastUpdate: new Date().getTime(), value: data })));
+    }
+
+    const aMissions = JSON.parse(sessionStorage.aMissions).value;
+    let config = localStorage.chiAConfig ? JSON.parse(localStorage.chiAConfig) : { credits: 0, vehicles: [] };
+    config.colorThresholds = config.colorThresholds ?? {
+        green: 10000,
+        yellow: 50000,
+        red: 100000,
+    };
+
+    const allianceMissions = [];
+
+    GM_addStyle(`
+    .modal {
+        display: none;
+        position: fixed;
+        padding-top: 100px;
+        left: 0;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        overflow: auto;
+        background-color: rgba(0,0,0,0.4);
+        z-index: 9999;
+    }
+    .modal-body {
+        height: 650px;
+        overflow-y: auto;
+    }`);
+
+    $(".mission-state-filters").append(`
+        <a id="chilloutArea" data-toggle="modal" data-target="#chiAModal" class="btn btn-xs btn-danger" title="Chillout starten">
+            <span class="glyphicon glyphicon-ice-lolly-tasted"></span> Chillout
+        </a>`);
+
+    $("body").prepend(`
+        <div class="modal fade bd-example-modal-lg" id="chiAModal" tabindex="-1" role="dialog" aria-hidden="true">
+            <div class="modal-dialog modal-lg" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                            <span aria-hidden="true">&#x274C;</span>
+                        </button>
+                        <h5 class="modal-title text-center">Let's chillout🏖️!</h5>
+                        <div class="btn-group">
+                            <a class="btn btn-success btn-xs" id="chiAScan">Scan</a>
+                            <a class="btn btn-success btn-xs" id="chiAStart">Start</a>
+                            <a class="btn btn-success btn-xs" id="chiAPreferences">
+                                <span class="glyphicon glyphicon-cog" style="color:LightSteelBlue"></span>
+                            </a>
+                        </div>
+                    </div>
+                    <div class="modal-body" id="chiAModalBody"></div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-danger" data-dismiss="modal">Schließen</button>
+                        <div class="pull-left">v 2.3</div>
+                    </div>
+                </div>
+            </div>
+        </div>`);
+
+    const vehicleList = [
+        { id: 0, name: 'LF 20' },
+        { id: 1, name: 'LF 10' },
+        { id: 2, name: 'DLK 23' },
+        { id: 3, name: 'ELW 1' },
+        { id: 4, name: 'RW' },
+        { id: 5, name: 'GW' },
+        { id: 6, name: 'LF 8/6' },
+        { id: 7, name: 'LF 20/16' },
+        { id: 8, name: 'LF 10/6' },
+        { id: 9, name: 'LF 16' },
+        { id: 10, name: 'GW' },
+        { id: 11, name: 'GW' },
+        { id: 12, name: 'GW' },
+        { id: 13, name: 'SW 1000' },
+        { id: 14, name: 'SW 2000' },
+        { id: 15, name: 'SW 2000' },
+        { id: 16, name: 'SW' },
+        { id: 17, name: 'TLF 2000' },
+        { id: 18, name: 'TLF 3000' },
+        { id: 19, name: 'TLF 8/8' },
+        { id: 20, name: 'TLF 8/18' },
+        { id: 21, name: 'TLF 16/24' },
+        { id: 22, name: 'TLF 16/25' },
+        { id: 23, name: 'TLF 16/45' },
+        { id: 24, name: 'TLF 20/40' },
+        { id: 25, name: 'TLF 20/40' },
+        { id: 26, name: 'TLF 16' },
+        { id: 27, name: 'GW' },
+        { id: 28, name: 'RTW' },
+        { id: 29, name: 'NEF' },
+        { id: 30, name: 'HLF 20' },
+        { id: 31, name: 'RTH' },
+        { id: 32, name: 'FuStW' },
+        { id: 33, name: 'GW' },
+        { id: 34, name: 'ELW 2' },
+        { id: 35, name: 'leBefKw' },
+        { id: 36, name: 'MTW' },
+        { id: 37, name: 'TSF' },
+        { id: 38, name: 'KTW' },
+        { id: 39, name: 'GKW' },
+        { id: 40, name: 'MTW' },
+        { id: 41, name: 'MzGW (FGr N)' },
+        { id: 42, name: 'LKW K 9' },
+        { id: 43, name: 'BRmG R' },
+        { id: 44, name: 'Anh DLE' },
+        { id: 45, name: 'MLW 5' },
+        { id: 46, name: 'WLF' },
+        { id: 47, name: 'AB' },
+        { id: 48, name: 'AB' },
+        { id: 49, name: 'AB' },
+        { id: 50, name: 'GruKw' },
+        { id: 51, name: 'FüKW (Polizei)' },
+        { id: 52, name: 'GefKw' },
+        { id: 53, name: 'Dekon' },
+        { id: 54, name: 'AB' },
+        { id: 55, name: 'KdoW' },
+        { id: 56, name: 'KdoW' },
+        { id: 57, name: 'FwK' },
+        { id: 58, name: 'KTW Typ B' },
+        { id: 59, name: 'ELW 1 (SEG)' },
+        { id: 60, name: 'GW' },
+        { id: 61, name: 'Polizeihubschrauber' },
+        { id: 62, name: 'AB' },
+        { id: 63, name: 'GW' },
+        { id: 64, name: 'GW' },
+        { id: 65, name: 'LKW 7 Lkr 19 tm' },
+        { id: 66, name: 'Anh MzB' },
+        { id: 67, name: 'Anh SchlB' },
+        { id: 68, name: 'Anh MzAB' },
+        { id: 69, name: 'Tauchkraftwagen' },
+        { id: 70, name: 'MZB' },
+        { id: 71, name: 'AB' },
+        { id: 72, name: 'WaWe 10' },
+        { id: 73, name: 'GRTW' },
+        { id: 74, name: 'NAW' },
+        { id: 75, name: 'FLF' },
+        { id: 76, name: 'Rettungstreppe' },
+        { id: 77, name: 'AB' },
+        { id: 78, name: 'AB' },
+        { id: 79, name: 'SEK' },
+        { id: 80, name: 'SEK' },
+        { id: 81, name: 'MEK' },
+        { id: 82, name: 'MEK' },
+        { id: 83, name: 'GW' },
+        { id: 84, name: 'ULF mit Löscharm' },
+        { id: 85, name: 'TM 50' },
+        { id: 86, name: 'Turbolöscher' },
+        { id: 87, name: 'TLF 4000' },
+        { id: 88, name: 'KLF' },
+        { id: 89, name: 'MLF' },
+        { id: 90, name: 'HLF 10' },
+        { id: 91, name: 'Rettungshundefahrzeug' },
+        { id: 92, name: 'Anh Hund' },
+        { id: 93, name: 'MTW' },
+        { id: 94, name: 'DHuFüKW' },
+        { id: 95, name: 'Polizeimotorrad' },
+        { id: 96, name: 'Außenlastbehälter (allgemein)' },
+        { id: 97, name: 'ITW' },
+        { id: 98, name: 'Zivilstreifenwagen' },
+        { id: 99, name: 'LKW 7 Lbw' },
+        { id: 100, name: 'MLW 4' },
+        { id: 101, name: 'Anh SwPu' },
+        { id: 102, name: 'Anh 7' },
+        { id: 103, name: 'FuStW (DGL)' },
+        { id: 104, name: 'GW' },
+        { id: 105, name: 'GW' },
+        { id: 106, name: 'MTF' },
+        { id: 107, name: 'LF' },
+        { id: 108, name: 'AB' },
+        { id: 109, name: 'MzGW SB' },
+        { id: 110, name: 'NEA50' },
+        { id: 111, name: 'NEA50' },
+        { id: 112, name: 'NEA200' },
+        { id: 113, name: 'NEA200' },
+        { id: 114, name: 'GW' },
+        { id: 115, name: 'Anh Lüfter' },
+        { id: 116, name: 'AB' },
+        { id: 117, name: 'AB' },
+        { id: 118, name: 'Kleintankwagen' },
+        { id: 119, name: 'AB' },
+        { id: 120, name: 'Tankwagen' },
+        { id: 121, name: 'GTLF' },
+        { id: 122, name: 'LKW 7 Lbw (FGr E)' },
+        { id: 123, name: 'LKW 7 Lbw (FGr WP)' },
+        { id: 124, name: 'MTW' },
+        { id: 125, name: 'MTW' },
+        { id: 126, name: 'MTF Drohne' },
+        { id: 127, name: 'GW' },
+        { id: 128, name: 'ELW Drohne' },
+        { id: 129, name: 'ELW 2 Drohne' },
+        { id: 130, name: 'GW' },
+        { id: 131, name: 'Bt' },
+        { id: 132, name: 'FKH' },
+        { id: 133, name: 'Bt LKW' },
+        { id: 134, name: 'Pferdetransporter klein' },
+        { id: 135, name: 'Pferdetransporter groß' },
+        { id: 136, name: 'Anh Pferdetransport' },
+        { id: 137, name: 'Zugfahrzeug Pferdetransport' },
+        { id: 138, name: 'GW' },
+        { id: 139, name: 'GW' },
+        { id: 140, name: 'MTW' },
+        { id: 141, name: 'FKH' },
+        { id: 142, name: 'AB' },
+        { id: 143, name: 'Anh Schlauch' },
+        { id: 144, name: 'FüKW (THW)' },
+        { id: 145, name: 'FüKomKW' },
+        { id: 146, name: 'Anh FüLa' },
+        { id: 147, name: 'FmKW' },
+        { id: 148, name: 'MTW' },
+        { id: 149, name: 'GW' },
+        { id: 150, name: 'GW' },
+        { id: 151, name: 'ELW Bergrettung' },
+        { id: 152, name: 'ATV' },
+        { id: 153, name: 'Hundestaffel (Bergrettung)' },
+        { id: 154, name: 'Schneefahrzeug' },
+        { id: 155, name: 'Anh Höhenrettung (Bergrettung)' },
+        { id: 156, name: 'Polizeihubschrauber mit verbauter Winde' },
+        { id: 157, name: 'RTH Winde' },
+        { id: 158, name: 'GW' },
+        { id: 159, name: 'Seenotrettungskreuzer' },
+        { id: 160, name: 'Seenotrettungsboot' },
+        { id: 161, name: 'Hubschrauber (Seenotrettung)' },
+        { id: 162, name: 'RW' },
+        { id: 163, name: 'HLF Schiene' },
+        { id: 164, name: 'AB' },
+        { id: 165, name: 'LauKw' },
+        { id: 166, name: 'PTLF 4000' },
+        { id: 167, name: 'SLF' },
+        { id: 168, name: 'Anh Sonderlöschmittel' },
+        { id: 169, name: 'AB' },
+        { id: 170, name: 'AB' }
+    ];
+
+    $("body").on("click", "#chilloutArea", function () {
+        autoRunActive = false;
+        $("#chiAModalBody").html(`
+            <center>
+                <img src="https://forum.leitstellenspiel.de/cms/index.php?attachment/93832-zivilpolizei-audi-forum-png/"
+                     style="max-width:100%; height:auto;">
+            </center>
+        `);
+        allianceMissions.length = 0;
+    });
+
+    // Holt den tatsächlichen Durchschnitts-Credit-Wert aus der Einsatzseite
+    async function fetchAverageCredits(missionId) {
+        try {
+            const html = await $.get(`/einsaetze/${missionId}`);
+            const parsed = $.parseHTML(html);
+            const row = $(parsed).find("table.table-striped tbody tr:contains('Credits im Durchschnitt')");
+            const value = row.find("td:last").text().trim().replace(/\./g, '').replace(/\D/g, '');
+            return parseInt(value, 10) || 50000;
+        } catch (err) {
+            console.warn(`Fehler beim Holen der Credits für Einsatz ${missionId}`, err);
+            return 50000;
+        }
+    }
+
+    $("body").on("click", "#chiAScan", async function () {
+        autoRunActive = false;
+        allianceMissions.length = 0;
+        const missionsToScan = [];
+
+        // Modalinhalt mit Progressbar vorbereiten
+        $("#chiAModalBody").html(`
+            <div style="margin-bottom: 10px;">
+                <div class="progress">
+                    <div id="chiAProgressBar" class="progress-bar progress-bar-striped active" role="progressbar"
+                         style="width: 0%">0%</div>
+                </div>
+            </div>
+        `);
+
+        const selectors = [];
+        if (config.useOwnMissions) selectors.push("#mission_list");
+        if (config.useAllianceMissions) selectors.push("#mission_list_alliance");
+        if (config.useAllianceEvents) selectors.push("#mission_list_alliance_event");
+        if (config.useSecurityMissions) selectors.push("#mission_list_sicherheitswache");
+        if (config.useSecurityMissionsAlliance) selectors.push("#mission_list_sicherheitswache_alliance");
+
+        selectors.forEach(sel => {
+            $(`${sel} .missionSideBarEntry:not(.mission_deleted)`).each(function () {
+                const id = +this.id.replace(/\D+/g, "");
+                if (!$(`#mission_participant_new_${id}`).hasClass("hidden")) {
+                    missionsToScan.push({
+                        id,
+                        typeId: +$(this).attr("mission_type_id"),
+                        name: $(`#mission_caption_${id}`).contents().not($(`#mission_caption_${id}`).children()).text().trim(),
+                        address: $(`#mission_address_${id}`).text().trim(),
+                    });
+                }
+            });
+        });
+
+        for (let i = 0; i < missionsToScan.length; i++) {
+            const m = missionsToScan[i];
+            const credits = await fetchAverageCredits(m.typeId);
+            allianceMissions.push({ ...m, credits });
+
+            const percent = Math.round(((i + 1) / missionsToScan.length) * 100);
+            $("#chiAProgressBar")
+                .css("width", `${percent}%`)
+                .text(`${percent}%`);
         }
 
-        return cacheData.data
-      } catch {
-        GM_deleteValue(`cl_${key}`)
-        return null
-      }
-    },
-  }
+        $("#chiAProgressBar")
+            .removeClass("progress-bar-striped active")
+            .addClass("progress-bar-success")
+            .text("Fertig");
 
-  // 👤 Get current user ID
-  function getCurrentUserId() {
-    // Method 1: Profile link
-    const profileLink = document.querySelector('a[href^="/profile/"]')
-    if (profileLink) {
-      const match = profileLink.href.match(/\/profile\/(\d+)/)
-      if (match) return Number.parseInt(match[1])
-    }
+        allianceMissions.sort((a, b) => b.credits - a.credits);
 
-    // Method 2: User menu
-    const userMenu = document.querySelector('#user_menu a[href^="/profile/"]')
-    if (userMenu) {
-      const match = userMenu.href.match(/\/profile\/(\d+)/)
-      if (match) return Number.parseInt(match[1])
-    }
+        const thresholds = config.colorThresholds ?? { green: 10000, yellow: 50000, red: 100000 };
 
-    // Method 3: Page source analysis
-    const scripts = document.querySelectorAll("script")
-    for (const script of scripts) {
-      if (script.textContent && script.textContent.includes("user_id")) {
-        const match = script.textContent.match(/user_id["\s]*[:=]["\s]*(\d+)/)
-        if (match) return Number.parseInt(match[1])
-      }
-    }
+        const tableRows = allianceMissions.map(e => {
+            if (e.credits < config.credits) return "";
 
-    return null
-  }
+            const colorClass = e.credits >= thresholds.red
+                ? "alert-danger"
+                : e.credits >= thresholds.yellow
+                ? "alert-warning"
+                : e.credits >= thresholds.green
+                ? "alert-success"
+                : "alert-info";
 
-  // 🔍 Verify user access and return allowed users list
-  async function verifyUserAccess() {
-    try {
-      const currentUserId = getCurrentUserId()
-      if (!currentUserId) {
-        throw new Error("Could not determine user ID")
-      }
+            return `
+                <tr id="tr_${e.id}" class="alert ${colorClass}">
+                    <td><input type="checkbox" class="batch-alarm-checkbox" data-mission-id="${e.id}"></td>
+                    <td><a class="lightbox-open" href="/missions/${e.id}">${e.name}</a></td>
+                    <td>${e.address}</td>
+                    <td>${e.credits.toLocaleString()}</td>
+                    <td id="status_${e.id}"></td>
+                    <td>
+                        <button class="btn btn-primary btn-xs single-alarm-btn" data-mission-id="${e.id}">Ein Fahrzeug schicken</button>
+                    </td>
+                </tr>
+            `;
+        }).join("");
 
-      if (CONFIG.DEBUG) console.log("🔍 Current user ID:", currentUserId)
+        const table = `
+        <table class="table">
+            <thead><tr><th></th><th>Name</th><th>Adresse</th><th>Credits</th><th>Status</th><th>Aktion</th></tr></thead>
+            <tbody>${tableRows}</tbody>
+        </table>
+        <button id="batchAlarmBtn" class="btn btn-danger" style="margin-top:10px;">Alle ausgewählten Einsätze alarmieren</button>
+    `;
 
-      // Check cache first
-      const cachedResult = Cache.get("user_check")
-      if (cachedResult && cachedResult.userId === currentUserId) {
-        return {
-          allowed: cachedResult.allowed,
-          allowedUsers: cachedResult.allowedUsers,
-        }
-      }
+        $("#chiAModalBody").append(table);
+    });
 
-      // Load encrypted user list from GitHub
-      const res = await fetchRemote(CONFIG.USER_LIST_URL)
-      const json = JSON.parse(res)
-      const encryptedText = json.encryptedUserIDs
+    // Einzelalarm-Button
+    $("body").on("click", ".single-alarm-btn", async function () {
+        const missionId = $(this).data("mission-id");
+        const statusCell = $(`#status_${missionId}`);
+        statusCell.text("suche ...");
 
-      if (!encryptedText) {
-        throw new Error("Invalid user list format - missing encryptedUserIDs")
-      }
-
-      // Decrypt using CryptoJS
-      const bytes = CryptoJS.AES.decrypt(encryptedText, CONFIG.ENCRYPTION_KEY)
-      const decryptedStr = bytes.toString(CryptoJS.enc.Utf8)
-
-      if (!decryptedStr) throw new Error("Entschlüsselung fehlgeschlagen")
-
-      const allowedUsers = JSON.parse(decryptedStr)
-
-      if (!Array.isArray(allowedUsers)) {
-        throw new Error("Decrypted data is not a valid user array")
-      }
-
-      const isAllowed = allowedUsers.includes(currentUserId)
-
-      // Cache the result
-      Cache.set(
-        "user_check",
-        {
-          userId: currentUserId,
-          allowed: isAllowed,
-          allowedUsers: allowedUsers,
-        },
-        2 * 60 * 1000,
-      ) // 2 minutes
-
-      if (!isAllowed) {
-        console.error("❌ Access denied for user ID:", currentUserId)
-        return { allowed: false, allowedUsers: null }
-      }
-
-      if (CONFIG.DEBUG) console.log("✅ Access granted for user ID:", currentUserId)
-      return { allowed: true, allowedUsers: allowedUsers }
-    } catch (error) {
-      console.error("❌ User verification failed:", error)
-      return { allowed: false, allowedUsers: null }
-    }
-  }
-
-  // 📥 Load main code
-  async function loadMainCode() {
-    try {
-      let mainCode = Cache.get("main_code")
-
-      if (!mainCode) {
-        console.log("🔄 Loading main code from GitHub...")
-        mainCode = await fetchRemote(CONFIG.MAIN_CODE_URL)
-
-        // Basic validation
-        if (!mainCode.includes("function") && !mainCode.includes("=>")) {
-          throw new Error("Invalid JavaScript code received")
+        async function loadMissingVehicles(htmlDoc) {
+            const loadButton = $(htmlDoc).find(".missing_vehicles_load").first();
+            if (loadButton.length === 0) return null;
+            const url = loadButton.attr("href");
+            if (!url) return null;
+            const data = await $.get(url);
+            return $.parseHTML(data);
         }
 
-        Cache.set("main_code", mainCode)
-        console.log("✅ Main code loaded and cached")
-      } else {
-        console.log("✅ Using cached main code")
-      }
+        let html = $.parseHTML(await $.get(`/missions/${missionId}`));
+        let reloadCount = 0;
+        let vehicleIdToAlarm = null;
 
-      return mainCode
-    } catch (error) {
-      console.error("❌ Failed to load main code:", error)
-      throw error
+        while (reloadCount <= 5) {
+            const checkboxes = $(html).find(".vehicle_checkbox").toArray();
+
+            vehicleIdToAlarm = null;
+            const vehicleListToUse = config.usePriority ? (config.vehiclePriority || []) : (config.vehicles || []);
+            for (let vType of vehicleListToUse) {
+                const cb = checkboxes.find(cb => +cb.getAttribute("vehicle_type_id") === vType);
+                if (cb) {
+                    vehicleIdToAlarm = +cb.value;
+                    break;
+                }
+            }
+
+            if (vehicleIdToAlarm !== null) break;
+
+            const newHtml = await loadMissingVehicles(html);
+            if (newHtml === null) break;
+            html = newHtml;
+            reloadCount++;
+        }
+
+        if (vehicleIdToAlarm !== null) {
+            statusCell.text("alarmiere ...");
+            await $.post(`/missions/${missionId}/alarm`, { vehicle_ids: [vehicleIdToAlarm] });
+            statusCell.text("alarmiert");
+            $(`#tr_${missionId}`).remove();
+        } else {
+            statusCell.text("keine passenden Fahrzeuge");
+        }
+    });
+
+    // Batch-Alarm-Button
+    $("body").on("click", "#batchAlarmBtn", async function () {
+        const selectedMissions = $(".batch-alarm-checkbox:checked").map(function() {
+            return $(this).data("mission-id");
+        }).get();
+
+        if (selectedMissions.length === 0) {
+            alert("Bitte mindestens einen Einsatz auswählen!");
+            return;
+        }
+
+        for (const missionId of selectedMissions) {
+            const statusCell = $("#status_" + missionId);
+            statusCell.text("suche ...");
+
+            async function loadMissingVehicles(htmlDoc) {
+                const loadButton = $(htmlDoc).find(".missing_vehicles_load").first();
+                if (loadButton.length === 0) return null;
+                const url = loadButton.attr("href");
+                if (!url) return null;
+                const data = await $.get(url);
+                return $.parseHTML(data);
+            }
+
+            let html = $.parseHTML(await $.get(`/missions/${missionId}`));
+            let reloadCount = 0;
+            let vehicleIdToAlarm = null;
+
+            while (reloadCount <= 5) {
+                const checkboxes = $(html).find(".vehicle_checkbox").toArray();
+
+                vehicleIdToAlarm = null;
+                const vehicleListToUse = config.usePriority ? (config.vehiclePriority || []) : (config.vehicles || []);
+                for (let vType of vehicleListToUse) {
+                    const cb = checkboxes.find(cb => +cb.getAttribute("vehicle_type_id") === vType);
+                    if (cb) {
+                        vehicleIdToAlarm = +cb.value;
+                        break;
+                    }
+                }
+
+                if (vehicleIdToAlarm !== null) break;
+
+                const newHtml = await loadMissingVehicles(html);
+                if (newHtml === null) break;
+                html = newHtml;
+                reloadCount++;
+            }
+
+            if (vehicleIdToAlarm !== null) {
+                statusCell.text("alarmiere ...");
+                await $.post(`/missions/${missionId}/alarm`, { vehicle_ids: [vehicleIdToAlarm] });
+                statusCell.text("alarmiert");
+                $(`#tr_${missionId}`).remove();
+            } else {
+                statusCell.text("keine passenden Fahrzeuge");
+            }
+        }
+    });
+
+    $("body").on("click", "#chiAStart", async function () {
+        autoRunActive = false;
+        for (let e of allianceMissions) {
+            const mId = e.id;
+            $("#status_" + mId).text("suche ...");
+
+            async function loadMissingVehicles(htmlDoc) {
+                const loadButton = $(htmlDoc).find(".missing_vehicles_load").first();
+                if (loadButton.length === 0) return null;
+                const url = loadButton.attr("href");
+                if (!url) return null;
+                const data = await $.get(url);
+                return $.parseHTML(data);
+            }
+
+            let html = $.parseHTML(await $.get(`/missions/${mId}`));
+            let reloadCount = 0;
+            let vehicleIdToAlarm = null;
+
+            while (reloadCount <= 5) {
+                const checkboxes = $(html).find(".vehicle_checkbox").toArray();
+
+                vehicleIdToAlarm = null;
+                const vehicleListToUse = config.usePriority ? (config.vehiclePriority || []) : (config.vehicles || []);
+                for (let vType of vehicleListToUse) {
+                    const cb = checkboxes.find(cb => +cb.getAttribute("vehicle_type_id") === vType);
+                    if (cb) {
+                        vehicleIdToAlarm = +cb.value;
+                        break;
+                    }
+                }
+
+                if (vehicleIdToAlarm !== null) break;
+
+                const newHtml = await loadMissingVehicles(html);
+                if (newHtml === null) break;
+                html = newHtml;
+                reloadCount++;
+            }
+
+            if (vehicleIdToAlarm !== null) {
+                $("#status_" + mId).text("alarmiere ...");
+                await $.post(`/missions/${mId}/alarm`, { vehicle_ids: [vehicleIdToAlarm] });
+                $("#status_" + mId).text("alarmiert");
+                $(`#tr_${mId}`).remove();
+            } else {
+                $("#status_" + mId).text("keine passenden Fahrzeuge");
+            }
+        }
+    });
+
+    // Preferences/Settings
+    $("body").on("click", "#chiAPreferences", function () {
+        const currentSelected = Array.isArray(config.vehicles) ? config.vehicles : [];
+        const currentPriority = Array.isArray(config.vehiclePriority) ? config.vehiclePriority : [];
+        const isChecked = config.autoRun ?? false;
+        config.usePriority = config.usePriority ?? false;
+
+        config.useOwnMissions = config.useOwnMissions ?? false;
+        config.useAllianceMissions = config.useAllianceMissions ?? true;
+        config.useAllianceEvents = config.useAllianceEvents ?? true;
+        config.useSecurityMissions = config.useSecurityMissions ?? true;
+        config.useSecurityMissionsAlliance = config.useSecurityMissionsAlliance ?? false;
+
+        config.colorThresholds = config.colorThresholds ?? {
+            green: 10000,
+            yellow: 50000,
+            red: 100000
+        };
+        config.autoRunStart = config.autoRunStart || "08:00";
+        config.autoRunEnd = config.autoRunEnd || "22:00";
+        config.autoRunInterval = config.autoRunInterval || 30;
+
+        $("#chiAModalBody").html(`
+        <div>
+            <label>Einsätze ab <input type="number" id="chiACredits" value="${config.credits || 0}" style="width:5em" /> Credits anzeigen</label><br><br>
+
+            <label>Fahrzeugtypen (Strg + Klick für mehrere):</label><br>
+            <select multiple id="chiAVehicleTypes" class="form-control" style="height:20em; width:40em;">
+                ${vehicleList.map(v => `<option value="${v.id}" ${(currentSelected.includes(v.id) ? "selected" : "")}>${v.name}</option>`).join("")}
+            </select><br><br>
+
+            <fieldset>
+                <legend>Fahrzeug-Priorität aktivieren:</legend>
+                <label><input type="checkbox" id="chiAUsePriority" ${config.usePriority ? "checked" : ""}> Prioritäten verwenden</label>
+            </fieldset><br>
+
+            <div id="prioritySettings" style="display: ${config.usePriority ? "block" : "none"};">
+                <label>Fahrzeug-Priorität (Reihenfolge, Strg + Klick für mehrere):</label><br>
+                <select multiple id="chiAVehiclePriority" class="form-control" style="height:15em; width:40em;">
+                    ${vehicleList
+                        .filter(v => currentSelected.includes(v.id))
+                        .map(v => `<option value="${v.id}" ${(currentPriority.includes(v.id) ? "selected" : "")}>${v.name}</option>`)
+                        .join("")}
+                </select><br><br>
+            </div>
+
+            <fieldset>
+                <legend>Einsatzarten auswählen:</legend>
+                <label><input type="checkbox" id="chiAUseOwn" ${config.useOwnMissions ? "checked" : ""}> Eigene Einsätze</label><br>
+                <label><input type="checkbox" id="chiAUseAlliance" ${config.useAllianceMissions ? "checked" : ""}> Verbandseinsätze</label><br>
+                <label><input type="checkbox" id="chiAUseEvent" ${config.useAllianceEvents ? "checked" : ""}> Verbandseventeinsätze</label><br>
+                <label><input type="checkbox" id="chiAUseSecurity" ${config.useSecurityMissions ? "checked" : ""}> Sicherheitswachen</label><br>
+                <label><input type="checkbox" id="chiAUseSecurityAlliance" ${config.useSecurityMissionsAlliance ? "checked" : ""}> Sicherheitswachen (Verband)</label>
+            </fieldset><br>
+
+            <fieldset>
+                <legend>Farbliche Markierung nach Credits:</legend>
+                <label>🟩 Grün ab <input type="number" id="chiAColorGreen" value="${config.colorThresholds.green}" style="width:6em" /> Credits</label><br>
+                <label>🟨 Gelb ab <input type="number" id="chiAColorYellow" value="${config.colorThresholds.yellow}" style="width:6em" /> Credits</label><br>
+                <label>🟥 Rot ab <input type="number" id="chiAColorRed" value="${config.colorThresholds.red}" style="width:6em" /> Credits</label><br>
+            </fieldset><br>
+
+            <fieldset>
+                <legend>Auto-Run</legend>
+                <label><input type="checkbox" id="chiAAutoRun" ${isChecked ? "checked" : ""}> Auto-Run aktivieren</label><br><br>
+                <div id="autoRunTimeSettings" style="display: ${isChecked ? "block" : "none"}; margin-left: 20px;">
+                    <legend>Auto-Run Zeitsteuerung:</legend>
+                    <label>Startzeit <input type="time" id="chiAAutoRunStart" value="${config.autoRunStart}" /></label><br>
+                    <label>Endzeit <input type="time" id="chiAAutoRunEnd" value="${config.autoRunEnd}" /></label><br>
+                    <label>Intervall (Minuten) <input type="number" id="chiAAutoRunInterval" value="${config.autoRunInterval}" style="width:5em" /></label>
+                </div>
+            </fieldset><br>
+
+            <button class="btn btn-success" id="chiABtnSave">Speichern</button>
+        </div>
+        `);
+
+        $("body").off("change", "#chiAUsePriority").on("change", "#chiAUsePriority", function () {
+            $("#prioritySettings").slideToggle(this.checked);
+        });
+
+        $("body").off("change", "#chiAVehicleTypes").on("change", "#chiAVehicleTypes", function () {
+            const selected = $(this).val().map(Number);
+            const newOptions = vehicleList
+                .filter(v => selected.includes(v.id))
+                .map(v => `<option value="${v.id}">${v.name}</option>`)
+                .join("");
+            $("#chiAVehiclePriority").html(newOptions);
+        });
+    });
+
+    $("body").off("change", "#chiAAutoRun").on("change", "#chiAAutoRun", function() {
+        if ($(this).prop("checked")) {
+            $("#autoRunTimeSettings").slideDown();
+        } else {
+            $("#autoRunTimeSettings").slideUp();
+        }
+    });
+
+    $("body").on("click", "#chiABtnSave", function () {
+        const selected = $("#chiAVehicleTypes").val() || [];
+        const priority = $("#chiAVehiclePriority").val() || [];
+
+        config.credits = +$("#chiACredits").val();
+        config.vehicles = selected.map(Number);
+        config.vehiclePriority = priority.map(Number);
+        config.usePriority = $("#chiAUsePriority").prop("checked");
+        config.autoRun = $("#chiAAutoRun").prop("checked");
+
+        config.useOwnMissions = $("#chiAUseOwn").prop("checked");
+        config.useAllianceMissions = $("#chiAUseAlliance").prop("checked");
+        config.useAllianceEvents = $("#chiAUseEvent").prop("checked");
+        config.useSecurityMissions = $("#chiAUseSecurity").prop("checked");
+        config.useSecurityMissionsAlliance = $("#chiAUseSecurityAlliance").prop("checked");
+
+        config.colorThresholds = {
+            green: +$("#chiAColorGreen").val(),
+            yellow: +$("#chiAColorYellow").val(),
+            red: +$("#chiAColorRed").val(),
+        };
+
+        config.autoRunStart = $("#chiAAutoRunStart").val();
+        config.autoRunEnd = $("#chiAAutoRunEnd").val();
+        config.autoRunInterval = +$("#chiAAutoRunInterval").val();
+
+        localStorage.chiAConfig = JSON.stringify(config);
+        $("#chiAModalBody").html("<h3><center>Einstellungen gespeichert</center></h3>");
+
+        if (config.autoRun) {
+            setTimeout(runChilloutAuto, 1000);
+        }
+    });
+
+    // Auto-Chillout
+    async function runChilloutAuto() {
+        if (autoRunActive) {
+            console.log("⚠️ Auto-Run bereits aktiv – Abbruch");
+            return;
+        }
+        autoRunActive = true;
+
+        $("#chiAScan").click();
+        await new Promise(r => setTimeout(r, 2000));
+        $("#chiAStart").click();
+
+        autoRunActive = false;
     }
-  }
 
-  // 🚀 Execute the main code
-  function executeMainCode(code, allowedUsers) {
-    try {
-      // IMPORTANT: Set the global variable that your main script expects
-      window.chilloutAllowedUsers = allowedUsers
+    if (config.autoRun) {
+        function checkAndRunAuto() {
+            const now = new Date();
+            const start = config.autoRunStart?.split(":").map(Number) || [8, 0];
+            const end = config.autoRunEnd?.split(":").map(Number) || [22, 0];
 
-      if (CONFIG.DEBUG) {
-        console.log("🔧 Set window.chilloutAllowedUsers:", allowedUsers)
-        console.log("🔧 jQuery available:", typeof $, typeof jQuery)
-        console.log("🔧 window.$ available:", typeof window.$)
-        console.log("🔧 window.jQuery available:", typeof window.jQuery)
-      }
+            const nowMinutes = now.getHours() * 60 + now.getMinutes();
+            const startMinutes = start[0] * 60 + start[1];
+            const endMinutes = end[0] * 60 + end[1];
 
-      // Remove userscript headers if present
-      const cleanCode = code.replace(/\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\s*/, "")
+            if (nowMinutes >= startMinutes && nowMinutes <= endMinutes) {
+                runChilloutAuto();
+            } else {
+                console.log("⏰ Auto-Run: außerhalb der Zeitspanne");
+            }
+        }
 
-      // Create execution function with necessary globals
-      const executor = new Function(
-        "window",
-        "document",
-        "$",
-        "jQuery",
-        "GM_xmlhttpRequest",
-        "GM_addStyle",
-        "GM_setValue",
-        "GM_getValue",
-        "GM_deleteValue",
-        "console",
-        cleanCode,
-      )
-
-      // Execute with full environment
-      executor(
-        window,
-        document,
-        window.$ || window.jQuery,
-        window.jQuery || window.$,
-        GM_xmlhttpRequest,
-        GM_addStyle,
-        GM_setValue,
-        GM_getValue,
-        GM_deleteValue,
-        console,
-      )
-
-      console.log("✅ Chillout-Special executed successfully")
-    } catch (error) {
-      console.error("❌ Code execution failed:", error)
-      throw error
+        setTimeout(checkAndRunAuto, 3000);
+        setInterval(checkAndRunAuto, (config.autoRunInterval || 30) * 60 * 1000);
     }
-  }
 
-  // 🎯 Main initialization
-  async function initialize() {
-    try {
-      console.log("🚀 Chillout-Special Loader v" + CONFIG.VERSION)
-
-      // Check if we're on the right page
-      const currentPath = window.location.pathname
-      if (CONFIG.DEBUG) console.log("🚀 Current path:", currentPath)
-
-      // Allow script to run on main pages and mission-related pages
-      const allowedPaths = ["/", "/missions", "/aaos", "/daily_bonuses"]
-
-      const isAllowedPage = allowedPaths.some((path) => currentPath === path || currentPath.startsWith(path))
-
-      if (!isAllowedPage) {
-        if (CONFIG.DEBUG) console.log("ℹ️ Not on allowed page, skipping")
-        return
-      }
-
-      // Verify user access with encrypted list
-      const accessResult = await verifyUserAccess()
-      if (!accessResult.allowed) {
-        // Show access denied message
-        alert(
-          "❌ Zugriff verweigert!\n\nDu bist nicht berechtigt, dieses Script zu verwenden.\nKontaktiere den Administrator für weitere Informationen.",
-        )
-        return
-      }
-
-      // Load and execute main code with allowed users list
-      const mainCode = await loadMainCode()
-      executeMainCode(mainCode, accessResult.allowedUsers)
-
-      console.log("🎉 Chillout-Special loaded successfully!")
-
-      // Optional success indicator (only in debug mode)
-      if (CONFIG.DEBUG) {
-        const indicator = document.createElement("div")
-        indicator.style.cssText = `
-          position: fixed; top: 10px; right: 10px; z-index: 99999;
-          background: #4CAF50; color: white; padding: 8px 12px;
-          border-radius: 4px; font-size: 12px; font-family: Arial;
-          box-shadow: 0 2px 5px rgba(0,0,0,0.3);
-        `
-        indicator.textContent = "✅ Chillout loaded"
-        document.body.appendChild(indicator)
-        setTimeout(() => indicator.remove(), 3000)
-      }
-    } catch (error) {
-      console.error("❌ Loader initialization failed:", error)
-
-      // Show error only in debug mode
-      if (CONFIG.DEBUG) {
-        alert(`Loader Error: ${error.message}`)
-      }
-    }
-  }
-
-  // 🔄 Wait for page readiness
-  function startLoader() {
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", initialize)
-    } else {
-      // Small delay to ensure page is fully loaded
-      setTimeout(initialize, 1000)
-    }
-  }
-
-  // 🎬 Start the loader
-  startLoader()
-})()
+})();
