@@ -125,18 +125,18 @@
   // 🔓 Decrypt user list
   function decryptUserList(encryptedData, key) {
     try {
-      // Your encrypted data format: Base64 encoded
-      const decrypted = CryptoJS.AES.decrypt(encryptedData, key)
-      const decryptedText = decrypted.toString(CryptoJS.enc.Utf8)
+      // Use the exact same method as your working system
+      const bytes = CryptoJS.AES.decrypt(encryptedData, key)
+      const decryptedStr = bytes.toString(CryptoJS.enc.Utf8)
 
-      if (!decryptedText) {
-        throw new Error("Decryption failed - invalid key or data")
+      if (!decryptedStr) {
+        throw new Error("Entschlüsselung fehlgeschlagen - invalid key or data")
       }
 
-      return JSON.parse(decryptedText)
+      return JSON.parse(decryptedStr)
     } catch (error) {
       console.error("❌ Decryption error:", error)
-      throw new Error("Failed to decrypt user list")
+      throw new Error("Failed to decrypt user list: " + error.message)
     }
   }
 
@@ -156,16 +156,24 @@
         return cachedResult.allowed
       }
 
-      // Load encrypted user list from GitHub
-      const userListResponse = await fetchRemote(CONFIG.USER_LIST_URL)
-      const userListData = JSON.parse(userListResponse)
+      // Load encrypted user list from GitHub (exactly like your working system)
+      const res = await fetchRemote(CONFIG.USER_LIST_URL)
+      if (!res) throw new Error("Nicht erreichbar")
 
-      if (!userListData.encryptedUserIDs) {
+      const json = JSON.parse(res) // JSON parsen
+      const encryptedText = json.encryptedUserIDs // verschlüsselter String aus dem Feld
+
+      if (!encryptedText) {
         throw new Error("Invalid user list format - missing encryptedUserIDs")
       }
 
-      // Decrypt the user list
-      const allowedUsers = decryptUserList(userListData.encryptedUserIDs, CONFIG.ENCRYPTION_KEY)
+      // Decrypt using your exact method
+      const bytes = CryptoJS.AES.decrypt(encryptedText, CONFIG.ENCRYPTION_KEY)
+      const decryptedStr = bytes.toString(CryptoJS.enc.Utf8)
+
+      if (!decryptedStr) throw new Error("Entschlüsselung fehlgeschlagen")
+
+      const allowedUsers = JSON.parse(decryptedStr)
 
       if (!Array.isArray(allowedUsers)) {
         throw new Error("Decrypted data is not a valid user array")
@@ -178,6 +186,7 @@
 
       if (!isAllowed) {
         console.error("❌ Access denied for user ID:", currentUserId)
+        console.log("Allowed users:", allowedUsers)
         return false
       }
 
@@ -229,11 +238,11 @@
         "$",
         "jQuery",
         "GM_xmlhttpRequest",
-        "GM_addStyle",
-        "GM_setValue",
-        "GM_getValue",
-        "GM_deleteValue",
-        "console",
+        GM_addStyle,
+        GM_setValue,
+        GM_getValue,
+        GM_deleteValue,
+        console,
         cleanCode,
       )
 
@@ -265,17 +274,8 @@
 
       // Check if we're on the right page
       const currentPath = window.location.pathname
-      if (
-        !(
-          currentPath === "/" ||
-          currentPath === "/missions" ||
-          currentPath.startsWith("/missions") ||
-          currentPath === "/aaos" ||
-          document.querySelector("#mission_list") ||
-          document.querySelector(".mission_panel")
-        )
-      ) {
-        console.log("ℹ️ Not on missions page, skipping")
+      if (!(currentPath === "/" || currentPath === "/missions")) {
+        console.log("ℹ️ Not on main page, skipping")
         return
       }
 
