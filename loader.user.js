@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Chillout-Special Loader
-// @version      3.0
-// @description  Secure loader for Chillout-Special
+// @name         Chillout-Special Minimal Loader
+// @version      3.1
+// @description  Minimal secure loader for Chillout-Special
 // @author       zorlex25
 // @match        *://www.leitstellenspiel.de/*
 // @grant        GM_xmlhttpRequest
@@ -14,47 +14,33 @@
 // ==/UserScript==
 
 ;(async () => {
-  // 🔐 Configuration - Only URLs, no encryption logic
+  // 🔐 Minimal Configuration
   const CONFIG = {
     MAIN_CODE_URL: "https://raw.githubusercontent.com/zorlex25/LSS/main/chillout.user.js",
-    USER_LIST_URL: "https://raw.githubusercontent.com/zorlex25/LSS/main/allowed_users.json",
-
-    // Security settings
     DOMAIN_CHECK: "www.leitstellenspiel.de",
-    VERSION: "3.0",
-    CACHE_DURATION: 10 * 60 * 1000, // 10 minutes
-    TIMEOUT: 8000,
+    VERSION: "3.1",
+    CACHE_DURATION: 5 * 60 * 1000, // 5 minutes
+    TIMEOUT: 10000,
     DEBUG: false,
   }
 
-  // 🛡️ Basic anti-debugging (lightweight)
-  if (!CONFIG.DEBUG) {
-    ;(() => {
-      const detectDevTools = () => {
-        if (window.outerHeight - window.innerHeight > 200 || window.outerWidth - window.innerWidth > 200) {
-          console.clear()
-          debugger
-        }
-      }
-      setInterval(detectDevTools, 2000)
-
-      // Disable common shortcuts
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "F12" || (e.ctrlKey && e.shiftKey && (e.key === "I" || e.key === "C"))) {
-          e.preventDefault()
-        }
-      })
-    })()
-  }
-
-  // 🔒 Simple security check
+  // 🔒 Basic domain check
   if (window.location.hostname !== CONFIG.DOMAIN_CHECK) {
     console.error("❌ Domain check failed")
     return
   }
 
-  // 📡 Simple HTTP request function
-  function fetchRemote(url) {
+  // 🛡️ Minimal anti-debugging (only if not debug mode)
+  if (!CONFIG.DEBUG) {
+    setInterval(() => {
+      if (window.outerHeight - window.innerHeight > 200) {
+        debugger
+      }
+    }, 3000)
+  }
+
+  // 📡 Simple fetch function
+  function fetchCode(url) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method: "GET",
@@ -68,97 +54,122 @@
           if (response.status === 200) {
             resolve(response.responseText)
           } else {
-            reject(new Error(`HTTP ${response.status}`))
+            reject(new Error(`HTTP ${response.status}: ${response.statusText}`))
           }
         },
-        onerror: () => reject(new Error("Network error")),
-        ontimeout: () => reject(new Error("Timeout")),
+        onerror: (error) => reject(new Error("Network error")),
+        ontimeout: () => reject(new Error("Request timeout")),
       })
     })
   }
 
-  // 💾 Simple cache
+  // 💾 Simple cache system
   const Cache = {
     set: (key, data) => {
-      const cacheData = {
+      const item = {
         data: data,
         timestamp: Date.now(),
         version: CONFIG.VERSION,
       }
-      GM_setValue(`cl_${key}`, JSON.stringify(cacheData))
+      GM_setValue(`loader_${key}`, JSON.stringify(item))
     },
 
     get: (key) => {
       try {
-        const cached = GM_getValue(`cl_${key}`, null)
+        const cached = GM_getValue(`loader_${key}`, null)
         if (!cached) return null
 
-        const cacheData = JSON.parse(cached)
+        const item = JSON.parse(cached)
 
         // Check version and expiration
-        if (cacheData.version !== CONFIG.VERSION || Date.now() - cacheData.timestamp > CONFIG.CACHE_DURATION) {
-          GM_deleteValue(`cl_${key}`)
+        if (item.version !== CONFIG.VERSION || Date.now() - item.timestamp > CONFIG.CACHE_DURATION) {
+          GM_deleteValue(`loader_${key}`)
           return null
         }
 
-        return cacheData.data
+        return item.data
       } catch {
-        GM_deleteValue(`cl_${key}`)
+        GM_deleteValue(`loader_${key}`)
         return null
       }
     },
   }
 
-  // 📥 Load files from GitHub
-  async function loadFile(url, cacheKey, description) {
+  // 📥 Load main code
+  async function loadMainCode() {
     try {
-      let data = Cache.get(cacheKey)
+      let mainCode = Cache.get("main_code")
 
-      if (!data) {
-        console.log(`🔄 Loading ${description}...`)
-        data = await fetchRemote(url)
-        Cache.set(cacheKey, data)
-        console.log(`✅ ${description} loaded`)
+      if (!mainCode) {
+        console.log("🔄 Loading Chillout-Special from GitHub...")
+        mainCode = await fetchCode(CONFIG.MAIN_CODE_URL)
+
+        // Basic validation - check if it looks like a userscript
+        if (!mainCode.includes("==UserScript==") && !mainCode.includes("function")) {
+          throw new Error("Invalid code format received")
+        }
+
+        Cache.set("main_code", mainCode)
+        console.log("✅ Code loaded and cached")
+      } else {
+        console.log("✅ Using cached code")
       }
 
-      return data
+      return mainCode
     } catch (error) {
-      console.error(`❌ Failed to load ${description}:`, error.message)
+      console.error("❌ Failed to load main code:", error)
       throw error
     }
   }
 
-  // 🚀 Execute the main code
+  // 🚀 Execute the main code with full environment
   function executeMainCode(code) {
     try {
-      // Create execution environment - your obfuscated code handles everything else
+      // Remove userscript headers if present (they're not needed for execution)
+      const cleanCode = code.replace(/\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\s*/, "")
+
+      // Create execution function with all necessary globals
       const executor = new Function(
         "window",
         "document",
         "$",
         "jQuery",
-        "GM_addStyle",
         "GM_xmlhttpRequest",
+        "GM_addStyle",
         "GM_setValue",
         "GM_getValue",
-        code,
+        "GM_deleteValue",
+        "console",
+        "alert",
+        "setTimeout",
+        "setInterval",
+        "clearTimeout",
+        "clearInterval",
+        cleanCode,
       )
 
-      // Execute with required globals
+      // Execute with full environment
       executor(
         window,
         document,
         window.$ || window.jQuery,
         window.jQuery || window.$,
-        GM_addStyle,
         GM_xmlhttpRequest,
+        GM_addStyle,
         GM_setValue,
         GM_getValue,
+        GM_deleteValue,
+        console,
+        alert,
+        setTimeout,
+        setInterval,
+        clearTimeout,
+        clearInterval,
       )
 
       console.log("✅ Chillout-Special executed successfully")
     } catch (error) {
-      console.error("❌ Execution failed:", error)
+      console.error("❌ Code execution failed:", error)
       throw error
     }
   }
@@ -166,50 +177,72 @@
   // 🎯 Main initialization
   async function initialize() {
     try {
-      console.log("🚀 Starting Chillout-Special Loader v" + CONFIG.VERSION)
+      console.log("🚀 Chillout-Special Loader v" + CONFIG.VERSION)
 
-      // Check if on correct page
+      // Check if we're on the right page
+      const currentPath = window.location.pathname
       if (
         !(
-          window.location.pathname === "/" ||
-          window.location.pathname === "/missions" ||
-          window.location.pathname.startsWith("/missions")
+          currentPath === "/" ||
+          currentPath === "/missions" ||
+          currentPath.startsWith("/missions") ||
+          currentPath === "/aaos" ||
+          document.querySelector("#mission_list") ||
+          document.querySelector(".mission_panel")
         )
       ) {
+        console.log("ℹ️ Not on missions page, skipping")
         return
       }
 
-      // Load both files (your main code will handle user verification)
-      const [mainCode, userList] = await Promise.all([
-        loadFile(CONFIG.MAIN_CODE_URL, "main", "main code"),
-        loadFile(CONFIG.USER_LIST_URL, "users", "user list"),
-      ])
-
-      // Make user list available globally for your main script
-      window.chilloutUserList = userList
-
-      // Execute your obfuscated main code
+      // Load and execute main code
+      const mainCode = await loadMainCode()
       executeMainCode(mainCode)
 
-      console.log("🎉 Chillout-Special loaded!")
-    } catch (error) {
-      console.error("❌ Loader failed:", error)
+      console.log("🎉 Chillout-Special loaded successfully!")
 
+      // Optional success indicator (only in debug mode)
       if (CONFIG.DEBUG) {
-        alert(`Fehler beim Laden: ${error.message}`)
+        const indicator = document.createElement("div")
+        indicator.style.cssText = `
+          position: fixed; top: 10px; right: 10px; z-index: 99999;
+          background: #4CAF50; color: white; padding: 8px 12px;
+          border-radius: 4px; font-size: 12px; font-family: Arial;
+          box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        `
+        indicator.textContent = "✅ Chillout loaded"
+        document.body.appendChild(indicator)
+        setTimeout(() => indicator.remove(), 3000)
+      }
+    } catch (error) {
+      console.error("❌ Loader initialization failed:", error)
+
+      // Clear cache on error
+      Cache.get = () => null
+
+      // Show error only in debug mode
+      if (CONFIG.DEBUG) {
+        alert(`Loader Error: ${error.message}`)
       }
     }
   }
 
-  // 🔄 Wait for page and start
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initialize)
-  } else {
-    setTimeout(initialize, 500)
+  // 🔄 Wait for page readiness
+  function startLoader() {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", initialize)
+    } else {
+      // Small delay to ensure page is fully loaded
+      setTimeout(initialize, 1000)
+    }
   }
 
-  // 🧹 Cleanup
+  // 🧹 Cleanup on page unload
   window.addEventListener("beforeunload", () => {
-    window.chilloutUserList = null
+    // Clear any sensitive references
+    CONFIG.MAIN_CODE_URL = null
   })
+
+  // 🎬 Start the loader
+  startLoader()
 })()
