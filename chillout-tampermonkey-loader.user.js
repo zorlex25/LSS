@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Chillout-Special Loader
-// @version      1.2
-// @description  Working loader for Chillout-Special with encrypted user verification
+// @name         Chillout-Special Loader (Fixed)
+// @version      1.3
+// @description  Fixed loader that properly sets window.chilloutAllowedUsers
 // @author       zorlex25
 // @match        *://www.leitstellenspiel.de/*
 // @grant        GM_xmlhttpRequest
@@ -10,14 +10,13 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @require      https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js
-// @updateURL    https://raw.githubusercontent.com/zorlex25/LSS/main/chillout-working-loader.user.js
-// @downloadURL  https://raw.githubusercontent.com/zorlex25/LSS/main/chillout-working-loader.user.js
+// @updateURL    https://raw.githubusercontent.com/zorlex25/LSS/main/chillout-fixed-loader.user.js
+// @downloadURL  https://raw.githubusercontent.com/zorlex25/LSS/main/chillout-fixed-loader.user.js
 // ==/UserScript==
 
 ;(async () => {
   // 🔐 Configuration
   const CONFIG = {
-    // FIXED: Use raw GitHub URL instead of blob URL
     MAIN_CODE_URL: "https://raw.githubusercontent.com/zorlex25/LSS/main/chillout-main-clean.user.js",
     USER_LIST_URL: "https://raw.githubusercontent.com/zorlex25/LSS/main/allowed_users.json",
 
@@ -26,7 +25,7 @@
 
     // Security settings
     DOMAIN_CHECK: "www.leitstellenspiel.de",
-    VERSION: "1.2",
+    VERSION: "1.3",
     CACHE_DURATION: 10 * 60 * 1000, // 10 minutes
     TIMEOUT: 8000,
     DEBUG: false, // Set to true for debugging
@@ -124,7 +123,7 @@
     return null
   }
 
-  // 🔍 Verify user access
+  // 🔍 Verify user access and return allowed users list
   async function verifyUserAccess() {
     try {
       const currentUserId = getCurrentUserId()
@@ -137,7 +136,10 @@
       // Check cache first
       const cachedResult = Cache.get("user_check")
       if (cachedResult && cachedResult.userId === currentUserId) {
-        return cachedResult.allowed
+        return {
+          allowed: cachedResult.allowed,
+          allowedUsers: cachedResult.allowedUsers,
+        }
       }
 
       // Load encrypted user list from GitHub
@@ -164,18 +166,26 @@
       const isAllowed = allowedUsers.includes(currentUserId)
 
       // Cache the result
-      Cache.set("user_check", { userId: currentUserId, allowed: isAllowed }, 2 * 60 * 1000) // 2 minutes
+      Cache.set(
+        "user_check",
+        {
+          userId: currentUserId,
+          allowed: isAllowed,
+          allowedUsers: allowedUsers,
+        },
+        2 * 60 * 1000,
+      ) // 2 minutes
 
       if (!isAllowed) {
         console.error("❌ Access denied for user ID:", currentUserId)
-        return false
+        return { allowed: false, allowedUsers: null }
       }
 
       if (CONFIG.DEBUG) console.log("✅ Access granted for user ID:", currentUserId)
-      return true
+      return { allowed: true, allowedUsers: allowedUsers }
     } catch (error) {
       console.error("❌ User verification failed:", error)
-      return false
+      return { allowed: false, allowedUsers: null }
     }
   }
 
@@ -207,8 +217,13 @@
   }
 
   // 🚀 Execute the main code
-  function executeMainCode(code) {
+  function executeMainCode(code, allowedUsers) {
     try {
+      // IMPORTANT: Set the global variable that your main script expects
+      window.chilloutAllowedUsers = allowedUsers
+
+      if (CONFIG.DEBUG) console.log("🔧 Set window.chilloutAllowedUsers:", allowedUsers)
+
       // Remove userscript headers if present
       const cleanCode = code.replace(/\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\s*/, "")
 
@@ -253,17 +268,12 @@
     try {
       console.log("🚀 Chillout-Special Loader v" + CONFIG.VERSION)
 
-      // EXPANDED: Check for more pages where the script should run
+      // Check if we're on the right page
       const currentPath = window.location.pathname
       if (CONFIG.DEBUG) console.log("🚀 Current path:", currentPath)
 
       // Allow script to run on main pages and mission-related pages
-      const allowedPaths = [
-        "/",
-        "/missions",
-        "/aaos",
-        "/daily_bonuses", // Added this since you were on this page
-      ]
+      const allowedPaths = ["/", "/missions", "/aaos", "/daily_bonuses"]
 
       const isAllowedPage = allowedPaths.some((path) => currentPath === path || currentPath.startsWith(path))
 
@@ -273,8 +283,8 @@
       }
 
       // Verify user access with encrypted list
-      const hasAccess = await verifyUserAccess()
-      if (!hasAccess) {
+      const accessResult = await verifyUserAccess()
+      if (!accessResult.allowed) {
         // Show access denied message
         alert(
           "❌ Zugriff verweigert!\n\nDu bist nicht berechtigt, dieses Script zu verwenden.\nKontaktiere den Administrator für weitere Informationen.",
@@ -282,9 +292,9 @@
         return
       }
 
-      // Load and execute main code
+      // Load and execute main code with allowed users list
       const mainCode = await loadMainCode()
-      executeMainCode(mainCode)
+      executeMainCode(mainCode, accessResult.allowedUsers)
 
       console.log("🎉 Chillout-Special loaded successfully!")
 
