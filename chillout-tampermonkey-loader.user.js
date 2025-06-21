@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Chillout-Special Loader
-// @version      1.0
-// @description  Loader for Chillout-Special with encrypted user verification
+// @name         Chillout-Special Debug Loader
+// @version      1.1
+// @description  Debug version to troubleshoot user verification
 // @author       zorlex25
 // @match        *://www.leitstellenspiel.de/*
 // @grant        GM_xmlhttpRequest
@@ -10,8 +10,8 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @require      https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js
-// @updateURL    https://raw.githubusercontent.com/zorlex25/LSS/main/chillout-tampermonkey-loader.user.js
-// @downloadURL  https://raw.githubusercontent.com/zorlex25/LSS/main/chillout-tampermonkey-loader.user.js
+// @updateURL    https://raw.githubusercontent.com/zorlex25/LSS/main/chillout-debug-loader.user.js
+// @downloadURL  https://raw.githubusercontent.com/zorlex25/LSS/main/chillout-debug-loader.user.js
 // ==/UserScript==
 
 ;(async () => {
@@ -26,11 +26,13 @@
 
     // Security settings
     DOMAIN_CHECK: "www.leitstellenspiel.de",
-    VERSION: "1.0",
+    VERSION: "1.1",
     CACHE_DURATION: 10 * 60 * 1000, // 10 minutes
     TIMEOUT: 8000,
-    DEBUG: false,
+    DEBUG: true, // Enable debug mode
   }
+
+  console.log("🔧 DEBUG MODE ENABLED - Detailed logging active")
 
   // 🔒 Basic security check
   if (window.location.hostname !== CONFIG.DOMAIN_CHECK) {
@@ -41,6 +43,7 @@
   // 📡 HTTP request function
   function fetchRemote(url) {
     return new Promise((resolve, reject) => {
+      console.log("📡 Fetching:", url)
       GM_xmlhttpRequest({
         method: "GET",
         url: url,
@@ -50,143 +53,142 @@
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         },
         onload: (response) => {
+          console.log("📡 Response status:", response.status)
           if (response.status === 200) {
+            console.log("📡 Response received, length:", response.responseText.length)
             resolve(response.responseText)
           } else {
             reject(new Error(`HTTP ${response.status}: ${response.statusText}`))
           }
         },
-        onerror: (error) => reject(new Error("Network error: " + error)),
-        ontimeout: () => reject(new Error("Request timeout")),
+        onerror: (error) => {
+          console.error("📡 Network error:", error)
+          reject(new Error("Network error: " + error))
+        },
+        ontimeout: () => {
+          console.error("📡 Request timeout")
+          reject(new Error("Request timeout"))
+        },
       })
     })
   }
 
-  // 💾 Simple cache
-  const Cache = {
-    set: (key, data) => {
-      const cacheData = {
-        data: data,
-        timestamp: Date.now(),
-        version: CONFIG.VERSION,
-      }
-      GM_setValue(`cl_${key}`, JSON.stringify(cacheData))
-    },
-
-    get: (key) => {
-      try {
-        const cached = GM_getValue(`cl_${key}`, null)
-        if (!cached) return null
-
-        const cacheData = JSON.parse(cached)
-
-        // Check version and expiration
-        if (cacheData.version !== CONFIG.VERSION || Date.now() - cacheData.timestamp > CONFIG.CACHE_DURATION) {
-          GM_deleteValue(`cl_${key}`)
-          return null
-        }
-
-        return cacheData.data
-      } catch {
-        GM_deleteValue(`cl_${key}`)
-        return null
-      }
-    },
-  }
-
-  // 👤 Get current user ID
+  // 👤 Get current user ID with detailed logging
   function getCurrentUserId() {
+    console.log("👤 Attempting to get current user ID...")
+
     // Method 1: Profile link
     const profileLink = document.querySelector('a[href^="/profile/"]')
     if (profileLink) {
+      console.log("👤 Found profile link:", profileLink.href)
       const match = profileLink.href.match(/\/profile\/(\d+)/)
-      if (match) return Number.parseInt(match[1])
+      if (match) {
+        const userId = Number.parseInt(match[1])
+        console.log("👤 Extracted user ID from profile link:", userId)
+        return userId
+      }
     }
 
     // Method 2: User menu
     const userMenu = document.querySelector('#user_menu a[href^="/profile/"]')
     if (userMenu) {
+      console.log("👤 Found user menu link:", userMenu.href)
       const match = userMenu.href.match(/\/profile\/(\d+)/)
-      if (match) return Number.parseInt(match[1])
+      if (match) {
+        const userId = Number.parseInt(match[1])
+        console.log("👤 Extracted user ID from user menu:", userId)
+        return userId
+      }
     }
 
     // Method 3: Page source analysis
     const scripts = document.querySelectorAll("script")
+    console.log("👤 Checking", scripts.length, "script tags for user_id...")
     for (const script of scripts) {
       if (script.textContent && script.textContent.includes("user_id")) {
+        console.log("👤 Found script with user_id")
         const match = script.textContent.match(/user_id["\s]*[:=]["\s]*(\d+)/)
-        if (match) return Number.parseInt(match[1])
+        if (match) {
+          const userId = Number.parseInt(match[1])
+          console.log("👤 Extracted user ID from script:", userId)
+          return userId
+        }
       }
     }
 
+    console.error("👤 Could not find user ID using any method")
     return null
   }
 
-  // 🔓 Decrypt user list
-  function decryptUserList(encryptedData, key) {
-    try {
-      // Use the exact same method as your working system
-      const bytes = CryptoJS.AES.decrypt(encryptedData, key)
-      const decryptedStr = bytes.toString(CryptoJS.enc.Utf8)
-
-      if (!decryptedStr) {
-        throw new Error("Entschlüsselung fehlgeschlagen - invalid key or data")
-      }
-
-      return JSON.parse(decryptedStr)
-    } catch (error) {
-      console.error("❌ Decryption error:", error)
-      throw new Error("Failed to decrypt user list: " + error.message)
-    }
-  }
-
-  // 🔍 Verify user access
+  // 🔍 Verify user access with detailed debugging
   async function verifyUserAccess() {
     try {
+      console.log("🔍 Starting user access verification...")
+
       const currentUserId = getCurrentUserId()
       if (!currentUserId) {
+        console.error("🔍 No user ID found - cannot verify access")
         throw new Error("Could not determine user ID")
       }
 
-      console.log("🔄 Verifying access for user ID:", currentUserId)
+      console.log("🔍 Current user ID:", currentUserId)
+      console.log("🔍 Loading encrypted user list from GitHub...")
 
-      // Check cache first
-      const cachedResult = Cache.get("user_check")
-      if (cachedResult && cachedResult.userId === currentUserId) {
-        return cachedResult.allowed
-      }
-
-      // Load encrypted user list from GitHub (exactly like your working system)
+      // Load encrypted user list from GitHub
       const res = await fetchRemote(CONFIG.USER_LIST_URL)
-      if (!res) throw new Error("Nicht erreichbar")
+      console.log("🔍 Raw response from GitHub:", res)
 
-      const json = JSON.parse(res) // JSON parsen
-      const encryptedText = json.encryptedUserIDs // verschlüsselter String aus dem Feld
+      const json = JSON.parse(res)
+      console.log("🔍 Parsed JSON:", json)
 
+      const encryptedText = json.encryptedUserIDs
       if (!encryptedText) {
+        console.error("🔍 No encryptedUserIDs field found in JSON")
         throw new Error("Invalid user list format - missing encryptedUserIDs")
       }
 
-      // Decrypt using your exact method
+      console.log("🔍 Encrypted text:", encryptedText)
+      console.log("🔍 Encryption key:", CONFIG.ENCRYPTION_KEY)
+      console.log("🔍 Attempting decryption...")
+
+      // Decrypt using CryptoJS
       const bytes = CryptoJS.AES.decrypt(encryptedText, CONFIG.ENCRYPTION_KEY)
+      console.log("🔍 Decryption bytes:", bytes)
+
       const decryptedStr = bytes.toString(CryptoJS.enc.Utf8)
+      console.log("🔍 Decrypted string:", decryptedStr)
 
-      if (!decryptedStr) throw new Error("Entschlüsselung fehlgeschlagen")
+      if (!decryptedStr) {
+        console.error("🔍 Decryption failed - empty result")
+        throw new Error("Entschlüsselung fehlgeschlagen")
+      }
 
+      console.log("🔍 Parsing decrypted JSON...")
       const allowedUsers = JSON.parse(decryptedStr)
+      console.log("🔍 Allowed users array:", allowedUsers)
+      console.log("🔍 Allowed users type:", typeof allowedUsers)
+      console.log("🔍 Is array:", Array.isArray(allowedUsers))
 
       if (!Array.isArray(allowedUsers)) {
+        console.error("🔍 Decrypted data is not an array")
         throw new Error("Decrypted data is not a valid user array")
       }
 
+      console.log("🔍 Checking if user", currentUserId, "is in allowed list:", allowedUsers)
       const isAllowed = allowedUsers.includes(currentUserId)
-
-      // Cache the result
-      Cache.set("user_check", { userId: currentUserId, allowed: isAllowed }, 2 * 60 * 1000) // 2 minutes
+      console.log("🔍 Access check result:", isAllowed)
 
       if (!isAllowed) {
         console.error("❌ Access denied for user ID:", currentUserId)
-        console.log("Allowed users:", allowedUsers)
+        console.error("❌ User not found in allowed list:", allowedUsers)
+
+        // Show detailed debug info in alert
+        alert(`DEBUG INFO:
+Current User ID: ${currentUserId}
+Allowed Users: ${JSON.stringify(allowedUsers)}
+User ID Type: ${typeof currentUserId}
+Allowed Users Types: ${allowedUsers.map((id) => typeof id).join(", ")}`)
+
         return false
       }
 
@@ -194,86 +196,20 @@
       return true
     } catch (error) {
       console.error("❌ User verification failed:", error)
+      alert(`VERIFICATION ERROR: ${error.message}`)
       return false
-    }
-  }
-
-  // 📥 Load main code
-  async function loadMainCode() {
-    try {
-      let mainCode = Cache.get("main_code")
-
-      if (!mainCode) {
-        console.log("🔄 Loading main code from GitHub...")
-        mainCode = await fetchRemote(CONFIG.MAIN_CODE_URL)
-
-        // Basic validation
-        if (!mainCode.includes("function") && !mainCode.includes("=>")) {
-          throw new Error("Invalid JavaScript code received")
-        }
-
-        Cache.set("main_code", mainCode)
-        console.log("✅ Main code loaded and cached")
-      } else {
-        console.log("✅ Using cached main code")
-      }
-
-      return mainCode
-    } catch (error) {
-      console.error("❌ Failed to load main code:", error)
-      throw error
-    }
-  }
-
-  // 🚀 Execute the main code
-  function executeMainCode(code) {
-    try {
-      // Remove userscript headers if present
-      const cleanCode = code.replace(/\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\s*/, "")
-
-      // Create execution function with necessary globals
-      const executor = new Function(
-        "window",
-        "document",
-        "$",
-        "jQuery",
-        "GM_xmlhttpRequest",
-        GM_addStyle,
-        GM_setValue,
-        GM_getValue,
-        GM_deleteValue,
-        console,
-        cleanCode,
-      )
-
-      // Execute with full environment
-      executor(
-        window,
-        document,
-        window.$ || window.jQuery,
-        window.jQuery || window.$,
-        GM_xmlhttpRequest,
-        GM_addStyle,
-        GM_setValue,
-        GM_getValue,
-        GM_deleteValue,
-        console,
-      )
-
-      console.log("✅ Chillout-Special executed successfully")
-    } catch (error) {
-      console.error("❌ Code execution failed:", error)
-      throw error
     }
   }
 
   // 🎯 Main initialization
   async function initialize() {
     try {
-      console.log("🚀 Chillout-Special Loader v" + CONFIG.VERSION)
+      console.log("🚀 Chillout-Special Debug Loader v" + CONFIG.VERSION)
 
       // Check if we're on the right page
       const currentPath = window.location.pathname
+      console.log("🚀 Current path:", currentPath)
+
       if (!(currentPath === "/" || currentPath === "/missions")) {
         console.log("ℹ️ Not on main page, skipping")
         return
@@ -289,32 +225,11 @@
         return
       }
 
-      // Load and execute main code
-      const mainCode = await loadMainCode()
-      executeMainCode(mainCode)
-
-      console.log("🎉 Chillout-Special loaded successfully!")
-
-      // Optional success indicator (only in debug mode)
-      if (CONFIG.DEBUG) {
-        const indicator = document.createElement("div")
-        indicator.style.cssText = `
-          position: fixed; top: 10px; right: 10px; z-index: 99999;
-          background: #4CAF50; color: white; padding: 8px 12px;
-          border-radius: 4px; font-size: 12px; font-family: Arial;
-          box-shadow: 0 2px 5px rgba(0,0,0,0.3);
-        `
-        indicator.textContent = "✅ Chillout loaded"
-        document.body.appendChild(indicator)
-        setTimeout(() => indicator.remove(), 3000)
-      }
+      console.log("🎉 Access granted - would load main script now")
+      alert("✅ DEBUG: Access granted! Check console for details.")
     } catch (error) {
       console.error("❌ Loader initialization failed:", error)
-
-      // Show error only in debug mode
-      if (CONFIG.DEBUG) {
-        alert(`Loader Error: ${error.message}`)
-      }
+      alert(`Loader Error: ${error.message}`)
     }
   }
 
