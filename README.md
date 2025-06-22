@@ -1,3 +1,10 @@
+Installation:
+1. Copy the following link into your browser and press Enter: https://github.com/zorlex25/LSS/raw/refs/heads/main/chillout-production-loader.user.js
+2. Install the script and make sure Tampermonkey is enabled in your extensions.
+3. Reload Leistellenspiel.de and allow the script access to the domains each time.
+4. Have fun!
+
+
 This script works for Leitstellenspiel.de.
 The script automatically sends a vehicle to each unit mission to earn credits. Of course, the vehicles that should/may be sent are configurable.
 The script offers various settings, including the ability to prioritize certain vehicle types that should/may be sent. An auto-run function that can be set to run every X minutes and start new shared missions. Some other customizations are also possible!
