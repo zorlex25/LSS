@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Chillout-Special Production Loader
+// @name         Chillout-Production Loader
 // @version      2.0
 // @description  Production loader with CSRF support and automatic logout for unauthorized users
 // @author       zorlex25
